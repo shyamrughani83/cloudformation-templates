@@ -1,0 +1,98 @@
+
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Lambda function for cost-saving actions based on Cost Explorer data
+
+Parameters:
+  CodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing the Lambda zip
+  CodeS3Key:
+    Type: String
+    Description: S3 key (path to zip file) for Lambda
+
+Resources:
+
+  CostOptimizerLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CostOptimizerLambdaRole
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchFullAccess
+        - arn:aws:iam::aws:policy/AWSLambda_FullAccess
+      Policies:
+        - PolicyName: InlineCostAccessPolicy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ce:GetCostAndUsage
+                  - ec2:DescribeInstances
+                  - ec2:StopInstances
+                  - ec2:DescribeNatGateways
+                  - rds:DescribeDBInstances
+                  - rds:StopDBInstance
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - ecs:ListClusters
+                  - ecs:ListServices
+                  - ecs:UpdateService
+                  - dynamodb:ListTables
+                  - dynamodb:UpdateTable
+                  - lambda:ListFunctions
+                  - lambda:PutFunctionConcurrency
+                  - s3:ListBuckets
+                  - cloudwatch:DescribeAlarms
+                  - cloudwatch:DisableAlarmActions
+                  - sns:ListTopics
+                  - glue:ListJobs
+                  - glue:UpdateJob
+                Resource: "*"
+
+  CostOptimizerLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: CostOptimizerLambda
+      Handler: index.lambda_handler
+      Role: !GetAtt CostOptimizerLambdaRole.Arn
+      Runtime: python3.11
+      Timeout: 300
+      MemorySize: 256
+      Code:
+        S3Bucket: !Ref CodeS3Bucket
+        S3Key: !Ref CodeS3Key
+      Environment:
+        Variables:
+          LOG_LEVEL: INFO
+
+  DailyTriggerRule:
+    Type: AWS::Events::Rule
+    Properties:
+      ScheduleExpression: rate(1 day)
+      State: ENABLED
+      Targets:
+        - Arn: !GetAtt CostOptimizerLambda.Arn
+          Id: CostOptimizerTrigger
+
+  PermissionForEventsToInvokeLambda:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref CostOptimizerLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt DailyTriggerRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Cost Optimizer Lambda
+    Value: !GetAtt CostOptimizerLambda.Arn
+
+  LambdaRoleName:
+    Description: IAM Role for the Lambda function
+    Value: !Ref CostOptimizerLambdaRole
